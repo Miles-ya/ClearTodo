@@ -1,160 +1,270 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { ref, nextTick, watch, onMounted } from 'vue';
+import { writeTextFile, readTextFile, exists, mkdir } from '@tauri-apps/plugin-fs';
+import { appDataDir, BaseDirectory } from '@tauri-apps/api/path';
 
-const greetMsg = ref("");
-const name = ref("");
+const DATA_FILE = 'tasks.json';
 
-async function greet() {
-  // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-  greetMsg.value = await invoke("greet", { name: name.value });
+// Define the structure of a task
+interface Task {
+  id: number;
+  text: string;
+  completed: boolean;
 }
+
+// Reactive state for the list of tasks - starts empty now
+const tasks = ref<Task[]>([]);
+
+// --- Persistence Functions ---
+const saveTasks = async () => {
+  try {
+    await mkdir(DATA_FILE, { baseDir: BaseDirectory.AppData });
+  } catch {
+    // Directory already exists, ignore
+  }
+  await writeTextFile(DATA_FILE, JSON.stringify(tasks.value), { baseDir: BaseDirectory.AppData });
+};
+
+const loadTasks = async () => {
+  try {
+    const content = await readTextFile(DATA_FILE, { baseDir: BaseDirectory.AppData });
+    const loadedTasks = JSON.parse(content);
+    if (Array.isArray(loadedTasks)) {
+      tasks.value = loadedTasks;
+    }
+  } catch {
+    // File doesn't exist yet, start fresh
+    tasks.value = [];
+  }
+};
+
+// Watch for changes in tasks and save them
+watch(tasks, saveTasks, { deep: true });
+
+// Load tasks when the component is mounted
+onMounted(loadTasks);
+
+
+// Reactive state for the new task input
+const newTaskText = ref('');
+
+// --- Editing State ---
+const editingTask = ref<Task | null>(null);
+const beforeEditText = ref('');
+
+// Function to add a new task
+const addTask = () => {
+  const text = newTaskText.value.trim();
+  if (text) {
+    tasks.value.unshift({
+      id: Date.now(),
+      text,
+      completed: false,
+    });
+    newTaskText.value = '';
+  }
+};
+
+// --- Editing Functions ---
+const editTask = async (task: Task) => {
+  beforeEditText.value = task.text;
+  editingTask.value = task;
+  await nextTick();
+  // Focus the input element
+  const input = document.getElementById(`edit-${task.id}`);
+  input?.focus();
+};
+
+const doneEdit = (task: Task) => {
+  if (!editingTask.value) return;
+  task.text = task.text.trim();
+  editingTask.value = null;
+  if (!task.text) {
+    deleteTask(task.id);
+  }
+};
+
+const cancelEdit = (task: Task) => {
+  if (!editingTask.value) return;
+  task.text = beforeEditText.value;
+  editingTask.value = null;
+};
+
+const deleteTask = (id: number) => {
+  tasks.value = tasks.value.filter((t) => t.id !== id);
+};
 </script>
 
 <template>
-  <main class="container">
-    <h1>Welcome to Tauri + Vue</h1>
-
-    <div class="row">
-      <a href="https://vite.dev" target="_blank">
-        <img src="/vite.svg" class="logo vite" alt="Vite logo" />
-      </a>
-      <a href="https://tauri.app" target="_blank">
-        <img src="/tauri.svg" class="logo tauri" alt="Tauri logo" />
-      </a>
-      <a href="https://vuejs.org/" target="_blank">
-        <img src="./assets/vue.svg" class="logo vue" alt="Vue logo" />
-      </a>
+  <div class="container" data-tauri-drag-region>
+    <div class="task-list">
+      <div v-for="task in tasks" :key="task.id" class="task-item" :class="{ completed: task.completed, editing: task === editingTask }">
+        <input type="checkbox" v-model="task.completed" />
+        <span v-if="task !== editingTask" @dblclick="editTask(task)">{{ task.text }}</span>
+        <input
+          v-else
+          type="text"
+          :id="`edit-${task.id}`"
+          v-model="task.text"
+          @blur="doneEdit(task)"
+          @keydown.enter="doneEdit(task)"
+          @keydown.esc="cancelEdit(task)"
+        />
+      </div>
     </div>
-    <p>Click on the Tauri, Vite, and Vue logos to learn more.</p>
-
-    <form class="row" @submit.prevent="greet">
-      <input id="greet-input" v-model="name" placeholder="Enter a name..." />
-      <button type="submit">Greet</button>
-    </form>
-    <p>{{ greetMsg }}</p>
-  </main>
+    <div class="input-area">
+      <input
+        type="text"
+        placeholder="> 在此输入新任务，按回车添加..."
+        v-model="newTaskText"
+        @keydown.enter="addTask"
+      />
+    </div>
+  </div>
 </template>
 
-<style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
 <style>
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
+/* Global styles for transparency */
+html,
+body {
+  background-color: transparent;
+  margin: 0;
+  padding: 0;
 }
 
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif;
+  font-size: 14px;
+  color: #f0f0f0;
+  text-shadow: 0 0 5px rgba(0, 0, 0, 0.4);
+}
+
+/* App container */
 .container {
-  margin: 0;
-  padding-top: 10vh;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  text-align: center;
+  height: 100vh;
+  box-sizing: border-box;
+  padding: 15px;
+  overflow: hidden;
+  border-radius: 10px;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
+/* Scrollbar styling */
+.task-list::-webkit-scrollbar {
+  width: 6px;
+}
+.task-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+.task-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+.task-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
 }
 
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
+/* Area for the list of tasks */
+.task-list {
+  flex-grow: 1;
+  overflow-y: auto;
+  padding-right: 5px; /* space for scrollbar */
 }
 
-.row {
+.task-item {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  padding: 8px 4px;
+  font-size: 16px;
+  border-radius: 5px;
+  transition: background-color 0.2s ease-in-out;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+.task-item:hover {
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
+.task-item span {
   cursor: pointer;
+  flex-grow: 1;
 }
 
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
+.task-item.completed span {
+  text-decoration: line-through;
+  color: rgba(255, 255, 255, 0.4);
 }
 
-input,
-button {
+/* Custom Checkbox */
+.task-item input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 18px;
+  width: 18px;
+  height: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 5px;
+  margin-right: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.task-item input[type='checkbox']:checked {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.task-item input[type='checkbox']:checked::after {
+  content: '✔';
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* Editing styles */
+.task-item input[type='text'] {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 16px;
+  font-family: inherit;
+  border: 1px solid #747bff;
+  border-radius: 5px;
+  background-color: rgba(0, 0, 0, 0.3);
+  color: #fff;
   outline: none;
 }
-
-#greet-input {
-  margin-right: 5px;
+.task-item.editing {
+  padding: 5px 2px; /* Adjust padding for editing */
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
+/* Bottom input area */
+.input-area {
+  flex-shrink: 0;
+  padding-top: 10px;
 }
 
+.input-area input {
+  width: 100%;
+  padding: 12px;
+  box-sizing: border-box;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background-color: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  border-radius: 8px;
+  outline: none;
+  transition: background-color 0.2s, border-color 0.2s;
+}
+
+.input-area input:focus {
+  background-color: rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.input-area input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
 </style>

@@ -12,9 +12,15 @@
   "app": {
     "windows": [
       {
-        "title": "cleartodo",
-        "width": 800,
-        "height": 600
+        "title": "ClearTodo",
+        "width": 380,
+        "height": 500,
+        "decorations": false,
+        "transparent": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "fullscreen": false
       }
     ],
     "security": {
